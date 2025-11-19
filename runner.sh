@@ -25,7 +25,7 @@ fi
 echo "Building Rana..."
 cargo build --release || { echo "Failed to build Rana"; exit 1; }
 
-# 3. Run the miner with the lowest priority in the background
+# 3. Run the miner with the lowest priority in the foreground
 echo "Starting Rana miner with vanity prefix: $VANITY_PREFIX"
-nice -n 19 target/release/rana --vanity-n-prefix="$VANITY_PREFIX" >> "$OUTPUT_FILE" 2>&1 &
-echo "Rana miner started with PID $! and lowest priority (nice value: 19)"
+nice -n 19 target/release/rana --vanity-n-prefix="$VANITY_PREFIX" >> "$OUTPUT_FILE" 2>&1
+echo "Rana miner finished"
