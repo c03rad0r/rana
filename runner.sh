@@ -5,6 +5,8 @@ REPO_URL="https://github.com/c03rad0r/rana.git"
 REPO_DIR="$HOME/rana"
 VANITY_PREFIX="meshmate"
 OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
+SERVICE_FILE="$REPO_DIR/rana.service"
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/rana.service"
 
 # 1. Clone or update the repository
 if [ -d "$REPO_DIR" ]; then
@@ -21,11 +23,20 @@ else
   git checkout -b meshmate origin/meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
 fi
 
-# 2. Build the project
+# 2. Copy the systemd service file if it doesn't exist or has changed
+echo "Installing/Updating systemd service file..."
+sudo cp "$SERVICE_FILE" "$SYSTEMD_SERVICE_FILE" || { echo "Failed to copy service file"; exit 1; }
+sudo systemctl daemon-reload || { echo "Failed to reload systemd daemon"; exit 1; }
+
+# 3. Enable the service
+echo "Enabling Rana service..."
+sudo systemctl enable rana.service || { echo "Failed to enable rana.service"; exit 1; }
+
+# 4. Build the project
 echo "Building Rana..."
 cargo build --release || { echo "Failed to build Rana"; exit 1; }
 
-# 3. Start the systemd service
+# 5. Start the systemd service
 echo "Starting Rana service..."
 sudo systemctl start rana.service || { echo "Failed to start rana.service"; exit 1; }
 echo "Rana service started"
