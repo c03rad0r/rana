@@ -3,7 +3,7 @@
 # Define variables
 REPO_URL="https://github.com/c03rad0r/rana.git"
 REPO_DIR="$HOME/rana"
-VANITY_PREFIX="meshmate"
+VANITY_PREFIX="fuckips"
 OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
 SERVICE_FILE="$REPO_DIR/rana.service"
 SYSTEMD_SERVICE_FILE="/etc/systemd/system/rana.service"

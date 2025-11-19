@@ -5,12 +5,12 @@ After=network.target
 [Service]
 User=c03rad0r
 Group=c03rad0r
-ExecStart=/home/c03rad0r/rana/target/release/rana --vanity-n-prefix=meshmate
+ExecStart=/home/c03rad0r/rana/target/release/rana --vanity-n-prefix=fuckips
 Restart=always
 RestartSec=5
 Nice=19
-StandardOutput=append:/home/c03rad0r/meshmate.md
-StandardError=append:/home/c03rad0r/meshmate.md
+StandardOutput=append:/home/c03rad0r/fuckips.md
+StandardError=append:/home/c03rad0r/fuckips.md
 
 [Install]
 WantedBy=multi-user.target
