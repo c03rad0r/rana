@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define variables
-REPO_URL="https://github.com/grunch/rana.git"
+#REPO_URL="https://github.com/grunch/rana.git"
 REPO_DIR="$HOME/rana"
 VANITY_PREFIX="meshmate"
 OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
