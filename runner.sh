@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define variables
-#REPO_URL="https://github.com/grunch/rana.git"
+REPO_URL="https://github.com/c03rad0r/rana.git"
 REPO_DIR="$HOME/rana"
 VANITY_PREFIX="meshmate"
 OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
@@ -10,18 +10,21 @@ OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
 if [ -d "$REPO_DIR" ]; then
   echo "Rana repository found. Pulling latest changes..."
   cd "$REPO_DIR" || { echo "Failed to change directory to $REPO_DIR"; exit 1; }
-  git fetch origin || { echo "Failed to fetch from origin"; exit 1; }
-  git reset --hard origin/main || { echo "Failed to reset to origin/main"; exit 1; }
+  git fetch github-c03rad0r || { echo "Failed to fetch from github-c03rad0r"; exit 1; }
+  git checkout meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
+  git reset --hard github-c03rad0r/meshmate || { echo "Failed to reset to github-c03rad0r/meshmate"; exit 1; }
 else
   echo "Cloning Rana repository..."
   git clone "$REPO_URL" "$REPO_DIR" || { echo "Failed to clone repository"; exit 1; }
   cd "$REPO_DIR" || { echo "Failed to change directory to $REPO_DIR"; exit 1; }
+  git checkout -b meshmate github-c03rad0r/meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
 fi
 
 # 2. Build the project
 echo "Building Rana..."
 cargo build --release || { echo "Failed to build Rana"; exit 1; }
 
-# 3. Run the miner with the lowest priority
+# 3. Run the miner with the lowest priority in the background
 echo "Starting Rana miner with vanity prefix: $VANITY_PREFIX"
-nice -n 19 target/release/rana --vanity-n-prefix="$VANITY_PREFIX" >> "$OUTPUT_FILE" || { echo "Rana miner failed"; exit 1; }
+nice -n 19 target/release/rana --vanity-n-prefix="$VANITY_PREFIX" >> "$OUTPUT_FILE" 2>&1 &
+echo "Rana miner started with PID $! and lowest priority (nice value: 19)"
