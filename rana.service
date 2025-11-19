@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=c03rad0r
 Group=c03rad0r
-ExecStart=/home/c03rad0r/rana/target/release/rana --vanity-n-prefix=c03rad0r
+ExecStart=/home/c03rad0r/rana/target/release/rana --vanity-n-prefix=c03rad0r,meshmate
 Restart=always
 RestartSec=5
 Nice=19
