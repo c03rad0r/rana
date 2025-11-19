@@ -10,13 +10,14 @@ OUTPUT_FILE="$HOME/$VANITY_PREFIX.md"
 if [ -d "$REPO_DIR" ]; then
   echo "Rana repository found. Pulling latest changes..."
   cd "$REPO_DIR" || { echo "Failed to change directory to $REPO_DIR"; exit 1; }
-  git fetch github-c03rad0r || { echo "Failed to fetch from github-c03rad0r"; exit 1; }
-  git checkout meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
+  git fetch --all || { echo "Failed to fetch from all remotes"; exit 1; }
+  git checkout meshmate 2>/dev/null || git checkout -b meshmate github-c03rad0r/meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
   git reset --hard github-c03rad0r/meshmate || { echo "Failed to reset to github-c03rad0r/meshmate"; exit 1; }
 else
   echo "Cloning Rana repository..."
   git clone "$REPO_URL" "$REPO_DIR" || { echo "Failed to clone repository"; exit 1; }
   cd "$REPO_DIR" || { echo "Failed to change directory to $REPO_DIR"; exit 1; }
+  git fetch --all || { echo "Failed to fetch from all remotes"; exit 1; }
   git checkout -b meshmate github-c03rad0r/meshmate || { echo "Failed to checkout meshmate branch"; exit 1; }
 fi
 
