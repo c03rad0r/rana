@@ -117,6 +117,17 @@ targets as a comma-separated list."
         help = "When true, disables difficulty scaling and keeps it fixed throughout."
     )]
     pub no_scaling: bool,
+
+    #[arg(
+        short = 'e',
+        long = "entropy-threshold",
+        required = false,
+        help = "Mine for low-entropy npubs instead of a named vanity prefix. \
+                Accepts the maximum Shannon entropy (bits/char) of the bech32 \
+                data portion; lower values are more ordered/repetitive. Range \
+                0.0-5.0. Mutually exclusive with difficulty/vanity options."
+    )]
+    pub entropy_threshold: Option<f64>,
 }
 
 pub fn check_args(
@@ -124,6 +135,7 @@ pub fn check_args(
     vanity_prefix: &str,
     vanity_npub_prefixes: &Vec<String>,
     vanity_npub_suffixes: &Vec<String>,
+    entropy_threshold: Option<f64>,
     num_cores: usize,
 ) {
     // Check the public key requirements
@@ -137,9 +149,21 @@ pub fn check_args(
     if !vanity_npub_prefixes.is_empty() || !vanity_npub_suffixes.is_empty() {
         requirements_count += 1;
     }
+    if entropy_threshold.is_some() {
+        requirements_count += 1;
+    }
 
     if requirements_count > 1 {
-        panic!("You can cannot specify more than one requirement. You should choose between difficulty or any of the vanity formats.");
+        panic!("You can cannot specify more than one requirement. You should choose between difficulty, vanity formats or entropy threshold.");
+    }
+
+    if let Some(threshold) = entropy_threshold {
+        // bech32 alphabet has 32 symbols → log2(32) == 5.0 is the theoretical max.
+        if !(0.0..=5.0).contains(&threshold) {
+            panic!(
+                "The entropy threshold must be within [0.0, 5.0] (bech32 alphabet cap is log2(32) = 5.0), got {threshold}"
+            );
+        }
     }
 
     if vanity_prefix.len() > 64 {

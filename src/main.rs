@@ -9,11 +9,12 @@ use clap::Parser;
 use nostr::bip39::Mnemonic;
 use nostr::prelude::*;
 use rana::cli::*;
+use rana::entropy;
 use rana::mnemonic::handle_mnemonic;
 use rana::utils::{benchmark_cores, get_leading_zero_bits, print_divider, print_keys, print_qr};
+use rana::BECH32_PREFIX;
 
 const DIFFICULTY_DEFAULT: u8 = 10;
-const BECH32_PREFIX: &str = "npub1";
 
 fn calculate_string_similarity(target: &str, candidate: &str) -> f64 {
     // Get the shorter length of the two strings to avoid index out of bounds
@@ -40,6 +41,7 @@ fn calculate_string_similarity(target: &str, candidate: &str) -> f64 {
 struct BestMatch {
     npub: String,
     similarity: f64,
+    entropy: f64,
     keys: Keys,
     mnemonic: Option<Mnemonic>,
 }
@@ -49,6 +51,7 @@ impl BestMatch {
         BestMatch {
             npub: String::new(),
             similarity: 0.0,
+            entropy: f64::MAX,
             keys: Keys::generate(), // Generate a default key
             mnemonic: None,
         }
@@ -72,6 +75,7 @@ fn main() -> Result<()> {
     let num_cores: usize = parsed_args.num_cores;
     let qr: bool = parsed_args.qr;
     let verbose_output: bool = parsed_args.verbose_output;
+    let entropy_threshold: Option<f64> = parsed_args.entropy_threshold;
     let best_match = Arc::new(Mutex::new(BestMatch::new()));
 
     for vanity_npub_pre in parsed_args.vanity_npub_prefixes_raw_input.split(',') {
@@ -91,6 +95,7 @@ fn main() -> Result<()> {
         vanity_prefix.as_str(),
         &vanity_npub_prefixes,
         &vanity_npub_suffixes,
+        entropy_threshold,
         num_cores,
     );
 
@@ -122,6 +127,12 @@ fn main() -> Result<()> {
         println!(
             "Started mining process for vanity bech32 suffix[es]: '...{vanity_npub_suffixes:?}' (estimated pow: {pow_difficulty})"
         );
+    } else if let Some(threshold) = entropy_threshold {
+        // Entropy mining: there is no meaningful "pow" estimate, so we leave
+        // pow_difficulty at its default and skip the benchmark below.
+        println!(
+            "Started mining process for low-entropy npub (Shannon entropy threshold: {threshold} bits/char)"
+        );
     } else {
         // Defaults to using difficulty
 
@@ -139,8 +150,11 @@ fn main() -> Result<()> {
     println!("Difficulty scaling: {}", !no_scaling);
 
     // benchmark cores
-    if !vanity_npub_prefixes.is_empty() || !vanity_npub_suffixes.is_empty() {
-        println!("Benchmarking of cores disabled for vanity npub key upon proper calculation.");
+    if !vanity_npub_prefixes.is_empty()
+        || !vanity_npub_suffixes.is_empty()
+        || entropy_threshold.is_some()
+    {
+        println!("Benchmarking of cores disabled for this mining mode.");
     } else {
         benchmark_cores(num_cores, pow_difficulty);
     }
@@ -155,6 +169,7 @@ fn main() -> Result<()> {
     let vanity_ts = Arc::new(vanity_prefix);
     let vanity_npubs_pre_ts = Arc::new(vanity_npub_prefixes);
     let vanity_npubs_post_ts = Arc::new(vanity_npub_suffixes);
+    let entropy_threshold_ts = Arc::new(entropy_threshold);
     let iterations = Arc::new(AtomicU64::new(0));
 
     // start a thread for each core for calculations
@@ -163,6 +178,7 @@ fn main() -> Result<()> {
         let vanity_ts = vanity_ts.clone();
         let vanity_npubs_pre_ts = vanity_npubs_pre_ts.clone();
         let vanity_npubs_post_ts = vanity_npubs_post_ts.clone();
+        let entropy_threshold_ts = entropy_threshold_ts.clone();
         let passphrase = Arc::new(parsed_args.mnemonic_passphrase.clone());
         let iterations = iterations.clone();
         let best_match = best_match.clone();
@@ -289,6 +305,25 @@ fn main() -> Result<()> {
                             }
                         }
                     }
+                } else if let Some(threshold) = *entropy_threshold_ts {
+                    // Entropy search: track the lowest-entropy npub seen so far.
+                    let bech_key: String = keys.public_key().to_bech32().unwrap();
+                    let h = entropy::npub_entropy(&bech_key);
+
+                    let mut best_match_guard = best_match.lock().unwrap();
+                    if h < best_match_guard.entropy {
+                        best_match_guard.entropy = h;
+                        best_match_guard.npub = bech_key.clone();
+                        best_match_guard.keys = keys.clone();
+                        best_match_guard.mnemonic = uses_mnemonic.clone();
+
+                        // Emit a milestone whenever we beat the previous best AND
+                        // meet the user's threshold. The actual printing happens
+                        // in the shared `is_valid_pubkey` block below.
+                        if h <= threshold {
+                            is_valid_pubkey = true;
+                        }
+                    }
                 } else {
                     // difficulty search
                     leading_zeroes = get_leading_zero_bits(&keys.public_key().serialize());
@@ -310,7 +345,14 @@ fn main() -> Result<()> {
                 if is_valid_pubkey {
                     let _guard = shared_output.lock().unwrap();
                     println!("{}", print_divider(30).bright_cyan());
-                    println!("Found exact match!");
+                    if let Some(threshold) = *entropy_threshold_ts {
+                        let h = best_match.lock().unwrap().entropy;
+                        println!(
+                            "Found low-entropy npub! Shannon entropy: {h:.4} bits/char (threshold: {threshold})"
+                        );
+                    } else {
+                        println!("Found exact match!");
+                    }
                     print_keys(&keys, vanity_npub, leading_zeroes, uses_mnemonic).unwrap();
                     let iterations = iterations.load(Ordering::Relaxed);
                     let iter_string = format!("{iterations}");
