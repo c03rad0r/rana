@@ -61,6 +61,11 @@ Options:
           Accepts the maximum Shannon entropy (bits/char) of the bech32
           data portion; lower values are more ordered/repetitive. Range
           0.0-5.0. Mutually exclusive with difficulty/vanity options.
+      --entropy-difficulty <ENTROPY_DIFFICULTY>
+          Mine for npubs with high entropy-edge difficulty (bits of
+          pattern: L×(5−H)). Rana auto-discovers the best prefix or
+          suffix edge of any length 1-29. Higher = longer and/or more
+          repetitive edges. Produces visually recognizable npubs.
   -c, --cores <NUM_CORES>
           Number of processor cores to use
   -r, --restore <MNEMONIC_PHRASE>
@@ -97,6 +102,9 @@ cargo run --release -- -n=rana,h0dl,n0strfan -s theend,end
 # Mine for a low-entropy npub (Shannon entropy <= 3.0 bits/char)
 cargo run --release -- --entropy-threshold=3.0
 
+# Mine for high-difficulty edges (auto-discovers best prefix/suffix edge)
+cargo run --release -- --entropy-difficulty=40
+
 # Generate key pair with 12 words mnemonic
 cargo run --release -- -g 12
 
@@ -121,8 +129,9 @@ rana --entropy-threshold=3.0
 ```
 
 Keep in mind that you cannot specify a difficulty and a vanity prefix at the same time.
-Entropy threshold (`-e`/`--entropy-threshold`) is a fourth, mutually exclusive mode: pick
-exactly one of difficulty, hex vanity, npub vanity, or entropy threshold.
+Entropy threshold (`-e`/`--entropy-threshold`) and entropy difficulty
+(`--entropy-difficulty`) are additional mutually exclusive modes: pick
+exactly one of difficulty, hex vanity, npub vanity, entropy threshold, or entropy difficulty.
 Also, the more requirements you have, the longer it will take to reach a satisfactory public key.
 
 ### Entropy mining
@@ -132,9 +141,9 @@ look-alike prefix at the same cost the original holder paid (the *Zucos triangle
 problem). The vanity property is symmetric, so it provides no lasting identity
 guarantee.
 
-`--entropy-threshold` flips this into an **asymmetric** defense. Instead of a
-target name, rana mines for a target **Shannon entropy** in the npub's bech32
-data portion:
+Both entropy modes flip this into an **asymmetric** defense. Instead of a
+target name, rana mines for **low Shannon entropy** (visual pattern) in the
+npub's bech32 data portion:
 
 - The holder picks npubs with unusually low entropy (high character repetition /
   visual order).
@@ -143,11 +152,11 @@ data portion:
   recognisably *different* from the original.
 - Pattern-imitation is not identity-imitation: the holder keeps a visual edge.
 
-The threshold is expressed in bits/char and must be within `[0.0, 5.0]` (the
-bech32 alphabet has 32 symbols, so `log2(32) == 5.0` is the theoretical maximum).
-Lower thresholds are more ordered and harder to find. Rana runs continuously and
-prints a milestone whenever it finds a new best that meets the threshold; stop it
-with `Ctrl+C` once you are happy with a result.
+#### `--entropy-threshold` (full-string mode)
+
+Mines for npubs where the entire bech32 data portion has Shannon entropy ≤ threshold.
+The threshold is in bits/char within `[0.0, 5.0]` (`log2(32) == 5.0` is the max).
+Visually subtle because repetition is spread across all 59 characters.
 
 ```bash
 # Easy: ~4.0 bits/char is found quickly
@@ -156,6 +165,35 @@ cargo run --release -- -e 4.0
 # Harder: 2.5 bits/char is highly repetitive and takes noticeably longer
 cargo run --release -- -e 2.5
 ```
+
+#### `--entropy-difficulty` (edge-resolver mode)
+
+Mines for npubs where the best prefix or suffix edge has high **difficulty**
+(bits of pattern). Rana auto-discovers the optimal edge length — the npub is
+**self-describing**: any Nostr client can compute the same edge to display.
+
+The difficulty metric is `L × (5−H)` where `L` is the edge length and `H` is the
+Shannon entropy of that edge. This rewards both **long** and **low-entropy**
+edges, producing visually recognizable npubs. Rana highlights the winning edge
+in green when printing a match.
+
+| Edge | L | H | Difficulty | Visual |
+|---|---|---|---|---|
+| `aa` | 2 | 0.0 | 10 | Trivial |
+| `aaaaaaabcab` | 10 | 0.7 | 43 | Good |
+| `aaaaabcaaaabcd` | 14 | 1.2 | 53 | Very recognizable |
+
+```bash
+# Target 40 bits of pattern — finds recognizable edges in seconds
+cargo run --release -- --entropy-difficulty=40
+
+# Higher targets produce longer/more repetitive edges but take longer
+cargo run --release -- --entropy-difficulty=60
+```
+
+The npub is self-describing: a client receiving any npub can compute
+`best_edge(npub)` to determine which prefix or suffix window to display
+prominently — no out-of-band parameters needed.
 
 ### Searching for multiple vanity targets at once
 

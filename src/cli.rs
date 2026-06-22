@@ -128,6 +128,16 @@ targets as a comma-separated list."
                 0.0-5.0. Mutually exclusive with difficulty/vanity options."
     )]
     pub entropy_threshold: Option<f64>,
+
+    #[arg(
+        long = "entropy-difficulty",
+        required = false,
+        help = "Mine for npubs with high entropy-edge difficulty (bits of \
+                pattern: L×(5−H)). Rana auto-discovers the best prefix or \
+                suffix edge of any length. Higher = longer and/or more \
+                repetitive. Mutually exclusive with all other mining modes."
+    )]
+    pub entropy_difficulty: Option<f64>,
 }
 
 pub fn check_args(
@@ -136,6 +146,7 @@ pub fn check_args(
     vanity_npub_prefixes: &Vec<String>,
     vanity_npub_suffixes: &Vec<String>,
     entropy_threshold: Option<f64>,
+    entropy_difficulty: Option<f64>,
     num_cores: usize,
 ) {
     // Check the public key requirements
@@ -152,9 +163,12 @@ pub fn check_args(
     if entropy_threshold.is_some() {
         requirements_count += 1;
     }
+    if entropy_difficulty.is_some() {
+        requirements_count += 1;
+    }
 
     if requirements_count > 1 {
-        panic!("You can cannot specify more than one requirement. You should choose between difficulty, vanity formats or entropy threshold.");
+        panic!("You can cannot specify more than one requirement. You should choose between difficulty, vanity formats, entropy threshold or entropy difficulty.");
     }
 
     if let Some(threshold) = entropy_threshold {
@@ -162,6 +176,14 @@ pub fn check_args(
         if !(0.0..=5.0).contains(&threshold) {
             panic!(
                 "The entropy threshold must be within [0.0, 5.0] (bech32 alphabet cap is log2(32) = 5.0), got {threshold}"
+            );
+        }
+    }
+
+    if let Some(target) = entropy_difficulty {
+        if target <= 0.0 {
+            panic!(
+                "The entropy difficulty target must be positive (bits of pattern L×(5−H)), got {target}"
             );
         }
     }

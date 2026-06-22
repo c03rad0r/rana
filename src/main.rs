@@ -58,6 +58,26 @@ impl BestMatch {
     }
 }
 
+/// Print an npub with the winning entropy edge highlighted in green.
+fn print_highlighted_edge(npub: &str, edge: &entropy::EdgeResult) {
+    let data = npub.strip_prefix(BECH32_PREFIX).unwrap_or(npub);
+    let data_len = data.len();
+    let edge_len = edge.length.min(data_len);
+
+    let highlighted = match edge.side {
+        entropy::EdgeSide::Prefix => {
+            let (e, rest) = data.split_at(edge_len);
+            format!("{BECH32_PREFIX}{}{}", e.green(), rest)
+        }
+        entropy::EdgeSide::Suffix => {
+            let split = data_len.saturating_sub(edge_len);
+            let (rest, e) = data.split_at(split);
+            format!("{BECH32_PREFIX}{}{}", rest, e.green())
+        }
+    };
+    println!("  {highlighted}");
+}
+
 fn main() -> Result<()> {
     // Parse CLI arguments
     let parsed_args = CLIArgs::parse();
@@ -76,6 +96,7 @@ fn main() -> Result<()> {
     let qr: bool = parsed_args.qr;
     let verbose_output: bool = parsed_args.verbose_output;
     let entropy_threshold: Option<f64> = parsed_args.entropy_threshold;
+    let entropy_difficulty: Option<f64> = parsed_args.entropy_difficulty;
     let best_match = Arc::new(Mutex::new(BestMatch::new()));
 
     for vanity_npub_pre in parsed_args.vanity_npub_prefixes_raw_input.split(',') {
@@ -96,6 +117,7 @@ fn main() -> Result<()> {
         &vanity_npub_prefixes,
         &vanity_npub_suffixes,
         entropy_threshold,
+        entropy_difficulty,
         num_cores,
     );
 
@@ -133,6 +155,10 @@ fn main() -> Result<()> {
         println!(
             "Started mining process for low-entropy npub (Shannon entropy threshold: {threshold} bits/char)"
         );
+    } else if let Some(target) = entropy_difficulty {
+        println!(
+            "Started mining process for entropy-edge difficulty (target: {target} bits of pattern)"
+        );
     } else {
         // Defaults to using difficulty
 
@@ -153,6 +179,7 @@ fn main() -> Result<()> {
     if !vanity_npub_prefixes.is_empty()
         || !vanity_npub_suffixes.is_empty()
         || entropy_threshold.is_some()
+        || entropy_difficulty.is_some()
     {
         println!("Benchmarking of cores disabled for this mining mode.");
     } else {
@@ -170,6 +197,7 @@ fn main() -> Result<()> {
     let vanity_npubs_pre_ts = Arc::new(vanity_npub_prefixes);
     let vanity_npubs_post_ts = Arc::new(vanity_npub_suffixes);
     let entropy_threshold_ts = Arc::new(entropy_threshold);
+    let entropy_difficulty_ts = Arc::new(entropy_difficulty);
     let iterations = Arc::new(AtomicU64::new(0));
 
     // start a thread for each core for calculations
@@ -179,6 +207,7 @@ fn main() -> Result<()> {
         let vanity_npubs_pre_ts = vanity_npubs_pre_ts.clone();
         let vanity_npubs_post_ts = vanity_npubs_post_ts.clone();
         let entropy_threshold_ts = entropy_threshold_ts.clone();
+        let entropy_difficulty_ts = entropy_difficulty_ts.clone();
         let passphrase = Arc::new(parsed_args.mnemonic_passphrase.clone());
         let iterations = iterations.clone();
         let best_match = best_match.clone();
@@ -324,6 +353,27 @@ fn main() -> Result<()> {
                             is_valid_pubkey = true;
                         }
                     }
+                } else if let Some(target) = *entropy_difficulty_ts {
+                    // Difficulty search: resolve best edge, track highest difficulty.
+                    let bech_key: String = keys.public_key().to_bech32().unwrap();
+                    let edge = entropy::best_edge(&bech_key);
+
+                    let mut best_match_guard = best_match.lock().unwrap();
+                    // In difficulty mode, best_match.entropy stores the best
+                    // difficulty found so far (higher is better). We use a
+                    // separate comparison since difficulty maximises.
+                    if best_match_guard.npub.is_empty()
+                        || edge.difficulty > best_match_guard.entropy
+                    {
+                        best_match_guard.entropy = edge.difficulty;
+                        best_match_guard.npub = bech_key.clone();
+                        best_match_guard.keys = keys.clone();
+                        best_match_guard.mnemonic = uses_mnemonic.clone();
+
+                        if edge.difficulty >= target {
+                            is_valid_pubkey = true;
+                        }
+                    }
                 } else {
                     // difficulty search
                     leading_zeroes = get_leading_zero_bits(&keys.public_key().serialize());
@@ -350,6 +400,23 @@ fn main() -> Result<()> {
                         println!(
                             "Found low-entropy npub! Shannon entropy: {h:.4} bits/char (threshold: {threshold})"
                         );
+                    } else if let Some(target) = *entropy_difficulty_ts {
+                        let bech_key = keys.public_key().to_bech32().unwrap();
+                        let edge = entropy::best_edge(&bech_key);
+                        let side_str = match edge.side {
+                            entropy::EdgeSide::Prefix => "prefix",
+                            entropy::EdgeSide::Suffix => "suffix",
+                        };
+                        println!(
+                            "Found high-difficulty npub! Difficulty: {:.1} bits (target: {target})",
+                            edge.difficulty
+                        );
+                        println!(
+                            "  Best edge: {side_str}, {} chars, entropy {:.3} bits/char",
+                            edge.length, edge.entropy
+                        );
+                        // Print npub with the winning edge highlighted in green
+                        print_highlighted_edge(&bech_key, &edge);
                     } else {
                         println!("Found exact match!");
                     }

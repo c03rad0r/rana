@@ -1,8 +1,9 @@
 # PR Plan: Entropy-based npub mining for rana
 
 - **Branch**: `feat/entropy-mining`, based off clean `upstream/main` (`bb4d6b8`, v0.5.5).
-- **Goal**: Add an opt-in mode that mines for *low-entropy* npubs instead of named/vanity npubs, giving holders an asymmetric anti-impersonation advantage (see Motivation).
-- **Mode semantics**: opt-in, mutually exclusive with difficulty/vanity, bech32-only, continuous best-so-far.
+- **Goal**: Two opt-in mining modes that produce visually recognizable npubs with an asymmetric anti-impersonation advantage (Zucos triangle mitigation).
+- **Commit 1** (done): `--entropy-threshold` — full-string Shannon entropy mode.
+- **Commit 2** (in progress): `--entropy-difficulty` — dynamic edge-resolver mode with difficulty metric `L×(5−H)`.
 
 ## Motivation (the "why")
 
@@ -20,134 +21,161 @@ Mining for a *target entropy* instead flips this into an **asymmetric** defense:
   recognisably *different* from the original.
 - Pattern-imitation is not identity-imitation. The holder keeps a visual edge.
 
+## Two mining modes
+
+### Mode 1: `--entropy-threshold <FLOAT>` (commit 1 — done)
+
+Simple full-string Shannon entropy. User specifies max entropy (0.0–5.0 bits/char).
+Visually subtle because repetition is diluted across 59 characters.
+
+### Mode 2: `--entropy-difficulty <FLOAT>` (commit 2 — in progress)
+
+Dynamic edge-resolver that auto-discovers the best prefix or suffix edge. Uses the
+**difficulty metric**: `L × (5−H)` ("bits of pattern"). The npub is self-describing
+— any client can compute the optimal display edge without knowing mining parameters.
+
+**Why `L×(5−H)` instead of `2^L×(5−H)`**: The exponential `2^L` overwhelms the
+entropy term — random 20-char edges would outscore genuinely mined 10-char edges.
+`L×(5−H)` correctly rewards both length and low entropy; random edges score ~0–8,
+mined edges score 40+. Directly analogous to rana's existing `--difficulty` (leading
+zero bits).
+
+**Formula constants**: `5.0 = log₂(32)` is the maximum Shannon entropy of the bech32
+alphabet. Not arbitrary — determined by the 32-symbol charset. Any positive scalar
+multiplier on the whole metric preserves the ranking (cosmetic only).
+
 ## Architecture decisions (locked)
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Mode combination | Mutually exclusive with `--difficulty`/`--vanity`/`-n`/`-s` | Matches existing `check_args()` convention; smallest review surface. Combinability can be a follow-up. |
-| Entropy base | bech32 npub only (data portion, strips `npub1`) | Directly matches the visual-recognition motivation. Function is generic over `&str` so hex is a trivial add later. |
-| Match behavior | Continuous; track lowest-entropy-seen; emit milestones ≤ threshold | Mirrors existing vanity "near matches" UX (PR #50). User Ctrl+C's at preferred result. |
-| Branch base | Clean `upstream/main` | PR contains only entropy commits; keeps local vanity-service work (`faa1dbc`, `0d4ed76`) out. |
-| Test depth | Unit tests only, colocated in `src/entropy.rs` | Zero new `[dev-dependencies]`; runs under existing `cargo test --verbose` CI step. |
+| Mode combination | All modes mutually exclusive | Matches existing `check_args()` convention. |
+| Entropy base | bech32 npub data portion (strips `npub1`) | Matches visual-recognition motivation. |
+| Match behavior | Continuous; track best-so-far; emit milestones | Mirrors existing vanity UX. User Ctrl+C's. |
+| Difficulty formula | `L × (5−H)` bits of pattern | Bounded, principled, rewards long+low-entropy. |
+| Edge resolution | `best_edge()` scans prefix/suffix lengths 1..29 | O(1,856) ops/npub — trivial vs secp256k1 keygen. |
+| Edge visibility | Colored green highlighting in terminal output | Zero mining cost; npub stays clean for copy/paste. |
+| Branch base | Clean `upstream/main` | PR contains only entropy commits. |
+| Test depth | Unit tests only, colocated in `src/entropy.rs` | Zero new `[dev-dependencies]`. |
+| nsite demo | Separate repo (`entropy-edge-demo`) | Reference JS impl for client developers. |
 
 ## Change list
 
-### 1. `src/entropy.rs` (new)
+### Rust changes (`feat/entropy-mining` branch)
 
-Core math + tests in one place (avoids the existing `calculate_string_similarity`
-duplication smell present in both `main.rs` and `utils.rs`).
+#### `src/entropy.rs`
+- `shannon_entropy(s)`, `npub_entropy(npub)`, `BECH32_MAX_ENTROPY` (done)
+- `EdgeSide` enum, `EdgeResult` struct (done)
+- `edge_difficulty(data)` → `L × (5−H)` (done)
+- `best_edge(npub) → EdgeResult` — incremental prefix/suffix scan (done)
+- Unit tests for all new functions (in progress)
 
-- `pub fn shannon_entropy(s: &str) -> f64` — stack `[usize; 256]` histogram,
-  single `log2` pass, `#[inline]`, no heap allocations.
-- `pub fn npub_entropy(npub_bech32: &str) -> f64` — strips `npub1`, delegates to
-  `shannon_entropy`. Returns entropy of the visual data portion.
-- `#[cfg(test)] mod tests` — 9 cases (see Testing).
+#### `src/cli.rs`
+- `--entropy-threshold <f64>` (done)
+- `--entropy-difficulty <f64>` (in progress) — joins mutual-exclusion counter
 
-### 2. `src/lib.rs`
+#### `src/main.rs`
+- `--entropy-threshold` mining branch (done)
+- `--entropy-difficulty` mining branch (in progress) — calls `best_edge()`,
+  tracks best difficulty, colored milestone output showing winning edge
+- Benchmark skip for both entropy modes (done for threshold)
 
-Register `pub mod entropy;`.
+#### `README.md`
+- `--entropy-threshold` docs (done)
+- `--entropy-difficulty` docs (in progress)
 
-### 3. `src/cli.rs`
+### nsite demo (`entropy-edge-demo` repo — separate)
 
-- New field on `CLIArgs`:
-  `#[arg(short = 'e', long = "entropy-threshold")] pub entropy_threshold: Option<f64>`.
-- `check_args()`: add entropy to the mutual-exclusion `requirements_count`
-  counter; validate range `[0.0, 5.0]` (bech32 alphabet cap = `log2(32)`).
+Static single-page app, no build step, no dependencies. Reference JS implementation
+of `best_edge()` for Nostr client developers.
 
-### 4. `src/main.rs`
+- `app.js` — Shannon entropy + `bestEdge()` resolver + DOM rendering (~200 lines)
+- `index.html` — 3 sections: interactive resolver, gallery, formula explainer (~80 lines)
+- `style.css` — dark theme, green edge highlights, bar chart (~80 lines)
+- `README.md` — nsite publishing instructions + formula reference
 
-- Extend `BestMatch` with `entropy: f64` (init `f64::MAX`) to track lowest-seen.
-- Thread an `Arc<Option<f64>>` threshold into each worker.
-- Insert a 4th `else if let Some(threshold)` branch: compute `npub_entropy`,
-  update best-so-far under the mutex, emit a milestone (divider + entropy value +
-  `print_keys`) when `h <= threshold`, set `is_valid_pubkey = true`.
-- Startup message chain gains an entropy arm.
-- Skip `benchmark_cores` for entropy mode (same as vanity — `2^pow` estimate
-  doesn't apply).
-
-### 5. `README.md`
-
-- Document `-e, --entropy-threshold <FLOAT>` in the options block.
-- Add an "Entropy mining" subsection with the Zucos-triangle motivation.
-- Add example: `cargo run --release -- --entropy-threshold=3.0`.
-- Update the "cannot specify difficulty and a vanity prefix at the same time"
-  note to list entropy as a fourth exclusive mode.
+**Section 1 — Interactive resolver**: paste npub → see best edge highlighted green +
+bar chart of difficulty vs edge length.
+**Section 2 — Gallery**: random vs mined npubs side-by-side.
+**Section 3 — Explainer**: formula breakdown + Zucos triangle.
 
 ## Testing strategy
 
-**Unit tests only, no new dependencies.** Colocated in `src/entropy.rs` under
-`#[cfg(test)]`. Executed by the existing CI step `cargo test --verbose`
-(`.github/workflows/rust.yml`). No Python/pytest — this is a pure-Rust crate.
+Unit tests only, no new dependencies. `cargo test --verbose` (existing CI).
 
-| Case | Input | Expected |
-|---|---|---|
-| empty input | `""` | `0.0` |
-| single repeated char | `"aaaa"` | `0.0` |
-| two distinct chars | `"ab"` | `1.0` |
-| four distinct chars | `"abcd"` | `2.0` |
-| bech32 alphabet cap (32 chars) | `"qpzry9x8gf2tvdw0s3jn54khce6mua7l"` | `5.0` |
-| npub prefix stripping | `npub1aaa…` | `< 1.0` |
-| bounded for any input | several | `0.0 ≤ h ≤ 5.0` |
-| repetition lowers entropy | `"aab"` vs `"abc"` | monotonic |
-| symmetry | `"abba"` vs `"baab"` | equal |
+**Existing tests (9)**: empty, repeated char, distinct chars, bech32 cap, prefix
+stripping, bounds, monotonicity, symmetry.
+
+**New tests for difficulty mode**: `best_edge` on random npub (low difficulty),
+repetitive prefix (prefix wins), repetitive suffix (suffix wins), `edge_difficulty`
+on known strings, empty string, monotonicity.
 
 ## Performance framing
 
-- secp256k1 keypair generation (~µs) dominates the loop.
-- Shannon entropy over 59 bytes is ~200ns (stack histogram, no allocs).
-- **Existing modes: zero cost** — the new `else if` branch is never taken when
-  `-e` is absent; the CPU branch predictor handles it for free.
-- **Entropy mode itself: ~10-20% slower** than pure difficulty — disclosed
-  honestly in the PR body, not hidden.
+- secp256k1 keygen (~µs) dominates the loop.
+- `best_edge()` per npub: O(1,856) ops ≈ ~500ns.
+- **Existing modes: zero cost** — new branches never taken when flags absent.
+- **Entropy modes**: ~10-20% slower than pure difficulty. Disclosed in PR body.
 
 ## Pre-PR verification
 
-1. `cargo fmt --all && cargo clippy --all-targets -- -D warnings`
-2. `cargo test --verbose` — existing `cli_tests` + 9 new entropy tests pass.
+1. `cargo fmt --all && cargo clippy --all-targets`
+2. `cargo test --verbose` — all tests pass
 3. `cargo build --release`
-4. Smoke: `./target/release/rana -e 4.0` (fast milestones),
-   `-e 2.0` (slow), `-e 3.0 -d 10` (panic: mutual exclusion).
-5. `git diff upstream/main...HEAD` contains only the 5 changes above.
+4. Smoke: `--entropy-difficulty 40` (should find milestones),
+   `--entropy-difficulty 40 -d 10` (panic: mutual exclusion),
+   `-e 4.0` (threshold mode still works), `-d 10` (no regression)
+5. Diff scoped to expected files.
 
 ## Risks / out-of-scope
 
-- `f64::MAX` init for `BestMatch.entropy` — print path must tolerate "no match yet".
-- The `calculate_string_similarity` duplication in `main.rs:18` / `utils.rs:64`
-  is pre-existing and **not** refactored here (keeps diff focused).
-- No `benches/` infrastructure — performance claims are manual measurements,
-  not automated benches. Offer formal benches as a follow-up.
+- `BestMatch.entropy` field reused as "best difficulty" in difficulty mode — init
+  `f64::MAX` works for min-tracking (threshold) but difficulty uses max-tracking.
+  Need to handle both modes or use separate field.
+- Pre-existing `calculate_string_similarity` duplication NOT refactored.
+- No `benches/` infrastructure — performance claims are manual.
 
 ---
 
 ## Checklist
 
-- [x] Create this planning document
-- [x] Create `feat/entropy-mining` branch off clean `upstream/main`
-- [x] Implement `src/entropy.rs` (`shannon_entropy` + `npub_entropy` + unit tests)
-- [x] Register `pub mod entropy;` in `src/lib.rs` (also centralised `BECH32_PREFIX`)
-- [x] Add `--entropy-threshold` CLI arg + update `check_args` in `src/cli.rs`
-- [x] Wire entropy branch into mining loop in `src/main.rs`
-      (BestMatch field + thread loop + milestone printing + benchmark skip)
-- [x] Update `README.md` (`-e` flag, entropy section, example, mutual-exclusion note)
-- [x] `cargo fmt --all` (new/changed files clean; pre-existing `utils.rs:69`
-      trailing-whitespace left untouched as out of scope)
-- [x] `cargo clippy --all-targets` (no new warnings; 3 pre-existing warnings
-      unchanged — `regex_creation_in_loops`, `module_inception`, `manual_range_contains`)
-- [x] `cargo test --verbose` — 11 passed (9 new entropy + 1 existing cli + 1 bin)
-- [x] `cargo build --release`
-- [x] Smoke test binary:
-      `-e 4.5` → progressive milestones (4.49→3.99 bits/char) ✓
-      `-e 3.0 -d 10` → mutual-exclusion panic ✓
-      `-e 9.0` → range-validation panic ✓
-      `--entropy-threshold=-1.0` → range-validation panic ✓
-      `-d 10` → no regression ✓
-- [x] Verify diff scoped to: `README.md`, `src/cli.rs`, `src/lib.rs`, `src/main.rs`
-      (modified) + `src/entropy.rs`, `docs/entropy-mining-plan.md` (new).
-      `src/utils.rs` reverted (only had auto-fmt whitespace, out of scope).
+### Commit 1: `--entropy-threshold` (full-string entropy mode) — DONE
 
-## Remaining before opening the PR (manual)
+- [x] Create `feat/entropy-mining` branch off clean `upstream/main`
+- [x] Implement `src/entropy.rs` (`shannon_entropy` + `npub_entropy` + 9 unit tests)
+- [x] Register `pub mod entropy;` in `src/lib.rs` (centralised `BECH32_PREFIX`)
+- [x] Add `--entropy-threshold` CLI arg + `check_args` validation in `src/cli.rs`
+- [x] Wire entropy branch into mining loop in `src/main.rs`
+- [x] Update `README.md`
+- [x] `cargo fmt` / `cargo clippy` / `cargo test` (11 passed) / `cargo build --release`
+- [x] Smoke tests pass
+- [x] Committed `c00cc6a`, pushed to `github/feat/entropy-mining`
+
+### Commit 2: `--entropy-difficulty` (dynamic edge resolver) — IN PROGRESS
+
+- [x] Add `BECH32_MAX_ENTROPY` constant to `src/entropy.rs`
+- [x] Add `EdgeSide` enum + `EdgeResult` struct to `src/entropy.rs`
+- [x] Add `edge_difficulty()` function to `src/entropy.rs`
+- [x] Add `best_edge()` function to `src/entropy.rs`
+- [ ] Add unit tests for `edge_difficulty` + `best_edge` in `src/entropy.rs`
+- [ ] Add `--entropy-difficulty` CLI arg + validation in `src/cli.rs`
+- [ ] Wire difficulty mining branch + colored output in `src/main.rs`
+- [ ] Update `README.md` with `--entropy-difficulty` docs
+- [ ] `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`
+- [ ] Smoke test: `--entropy-difficulty 40`, mutual exclusion, no regression
+- [ ] Commit + push
+
+### nsite demo (`entropy-edge-demo`) — PENDING
+
+- [ ] Create new repo `/home/c03rad0r/entropy-edge-demo/`
+- [ ] Implement `app.js` (entropy math + `bestEdge()` resolver + rendering)
+- [ ] Create `index.html` (3 sections: resolver, gallery, explainer)
+- [ ] Create `style.css` (dark theme, green highlights, bar chart)
+- [ ] Create `README.md` (nsite publishing + formula reference)
+- [ ] Test locally in browser
+
+### Pre-PR (manual)
 
 - [ ] Write the PR body (motivation, non-breaking claim, performance notes)
-- [ ] Optional: capture a keys/sec comparison table for the PR description
-- [ ] Commit + push the branch and open the PR against `grunch/rana`
+- [ ] Commit + push final state
+- [ ] Open PR against `grunch/rana`
 

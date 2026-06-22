@@ -5,6 +5,10 @@
 //! the *property* of low entropy, but the residual randomness forces the forged
 //! npub to look recognisably different. See `docs/entropy-mining-plan.md`.
 
+/// Maximum Shannon entropy of a single bech32 character: `log₂(32) == 5.0`.
+/// The bech32 alphabet has exactly 32 symbols.
+pub const BECH32_MAX_ENTROPY: f64 = 5.0;
+
 /// Compute the Shannon entropy (in bits per character) of an arbitrary string.
 ///
 /// Uses a fixed stack `[usize; 256]` histogram — no heap allocations — so it is
@@ -49,6 +53,114 @@ pub fn npub_entropy(npub_bech32: &str) -> f64 {
         .strip_prefix(super::BECH32_PREFIX)
         .unwrap_or(npub_bech32);
     shannon_entropy(data)
+}
+
+/// Which side of the npub the best edge was found on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeSide {
+    Prefix,
+    Suffix,
+}
+
+/// The result of resolving the best entropy edge on an npub.
+#[derive(Debug, Clone)]
+pub struct EdgeResult {
+    pub side: EdgeSide,
+    pub length: usize,
+    pub entropy: f64,
+    /// "Bits of pattern": `L × (BECH32_MAX_ENTROPY − H)`.
+    /// Directly analogous to rana's leading-zero-bits difficulty.
+    pub difficulty: f64,
+}
+
+impl EdgeResult {
+    fn none() -> Self {
+        EdgeResult {
+            side: EdgeSide::Prefix,
+            length: 0,
+            entropy: 0.0,
+            difficulty: 0.0,
+        }
+    }
+}
+
+/// Compute the difficulty (bits of pattern) of a string:
+/// `length × (BECH32_MAX_ENTROPY − entropy)`.
+#[inline]
+pub fn edge_difficulty(data: &str) -> f64 {
+    let h = shannon_entropy(data);
+    data.len() as f64 * (BECH32_MAX_ENTROPY - h)
+}
+
+/// Compute Shannon entropy from a pre-filled histogram.
+#[inline]
+fn entropy_from_hist(hist: &[usize; 256], len: usize) -> f64 {
+    if len == 0 {
+        return 0.0;
+    }
+    let n = len as f64;
+    let mut entropy = 0.0;
+    for &count in hist.iter() {
+        if count > 0 {
+            let p = count as f64 / n;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy
+}
+
+/// Resolve the best entropy edge on an npub — the prefix or suffix window
+/// (of any length 1..=29) that maximises `L × (5 − H)`.
+///
+/// Scans prefix and suffix edges incrementally (one histogram update per step),
+/// so the total cost is O(2 × 29 × 32) ≈ O(1,856) character operations per npub.
+///
+/// Any Nostr client can call this to determine which portion of an npub to
+/// display prominently — the npub is self-describing.
+pub fn best_edge(npub: &str) -> EdgeResult {
+    let data = npub.strip_prefix(super::BECH32_PREFIX).unwrap_or(npub);
+    let bytes = data.as_bytes();
+    let data_len = bytes.len();
+    if data_len == 0 {
+        return EdgeResult::none();
+    }
+
+    let max_edge = 29.min(data_len);
+    let mut best = EdgeResult::none();
+
+    // Scan prefix edges: L = 1, 2, ..., max_edge
+    let mut hist = [0usize; 256];
+    for l in 1..=max_edge {
+        hist[bytes[l - 1] as usize] += 1;
+        let h = entropy_from_hist(&hist, l);
+        let diff = l as f64 * (BECH32_MAX_ENTROPY - h);
+        if diff > best.difficulty {
+            best = EdgeResult {
+                side: EdgeSide::Prefix,
+                length: l,
+                entropy: h,
+                difficulty: diff,
+            };
+        }
+    }
+
+    // Scan suffix edges: L = 1, 2, ..., max_edge
+    let mut hist = [0usize; 256];
+    for l in 1..=max_edge {
+        hist[bytes[data_len - l] as usize] += 1;
+        let h = entropy_from_hist(&hist, l);
+        let diff = l as f64 * (BECH32_MAX_ENTROPY - h);
+        if diff > best.difficulty {
+            best = EdgeResult {
+                side: EdgeSide::Suffix,
+                length: l,
+                entropy: h,
+                difficulty: diff,
+            };
+        }
+    }
+
+    best
 }
 
 #[cfg(test)]
@@ -123,5 +235,90 @@ mod tests {
     #[test]
     fn symmetric_in_arg_order() {
         assert!((shannon_entropy("abba") - shannon_entropy("baab")).abs() < EPS);
+    }
+
+    // --- edge_difficulty tests ---
+
+    #[test]
+    fn edge_difficulty_monochrome() {
+        // "aaaa": entropy 0.0 → 4 × (5 − 0) = 20.0
+        assert!((edge_difficulty("aaaa") - 20.0).abs() < EPS);
+    }
+
+    #[test]
+    fn edge_difficulty_diverse() {
+        // "abcd": entropy 2.0 → 4 × (5 − 2) = 12.0
+        assert!((edge_difficulty("abcd") - 12.0).abs() < EPS);
+    }
+
+    #[test]
+    fn edge_difficulty_empty_is_zero() {
+        assert_eq!(edge_difficulty(""), 0.0);
+    }
+
+    #[test]
+    fn edge_difficulty_grows_with_repetition() {
+        assert!(edge_difficulty("aaab") > edge_difficulty("abcd"));
+        assert!(edge_difficulty("aaaa") > edge_difficulty("aaab"));
+    }
+
+    // --- best_edge tests ---
+
+    #[test]
+    fn best_edge_empty() {
+        let result = best_edge("");
+        assert_eq!(result.difficulty, 0.0);
+    }
+
+    #[test]
+    fn best_edge_repetitive_prefix_wins() {
+        let npub = "npub1aaaaaaaaaaaaaaaaaaaax7m2kp9qfl5d3wrt8hnqzy0vce4plm";
+        let result = best_edge(npub);
+        assert_eq!(result.side, EdgeSide::Prefix);
+        assert!(
+            result.difficulty > 50.0,
+            "expected > 50, got {}",
+            result.difficulty
+        );
+    }
+
+    #[test]
+    fn best_edge_repetitive_suffix_wins() {
+        let npub = "npub1x7m2kp9qfl5d3wrt8hnqzy0vce4plmqqqqqqqqqqqqqqqqqqqq";
+        let result = best_edge(npub);
+        assert_eq!(result.side, EdgeSide::Suffix);
+        assert!(
+            result.difficulty > 50.0,
+            "expected > 50, got {}",
+            result.difficulty
+        );
+    }
+
+    #[test]
+    fn best_edge_random_is_low_difficulty() {
+        let npub = "npub1x7m2kp9qfl5d3wrt8hnqzy0vce4plm3k9j5w7f2g6h8d4s1n";
+        let result = best_edge(npub);
+        assert!(
+            result.difficulty < 25.0,
+            "expected < 25 for random npub, got {}",
+            result.difficulty
+        );
+    }
+
+    #[test]
+    fn best_edge_longer_repetition_scores_higher() {
+        let short = best_edge("npub1aaaaax7m2kp9qfl5d3wrt8hnqzy");
+        let long = best_edge("npub1aaaaaaaaaaaaaaaaaaaax7m2kp9qfl5d3wrt8hnqzy");
+        assert!(long.difficulty > short.difficulty);
+    }
+
+    #[test]
+    fn best_edge_returns_valid_result() {
+        let npub = "npub1aaaaaaaaaaaaaaaaaaaax7m2kp9qfl5d3wrt8hnqzy0vce4plm";
+        let result = best_edge(npub);
+        assert!(result.length > 0);
+        assert!(result.length <= 29);
+        assert!(result.entropy >= 0.0 && result.entropy <= 5.0 + EPS);
+        assert!(result.difficulty >= 0.0);
     }
 }
