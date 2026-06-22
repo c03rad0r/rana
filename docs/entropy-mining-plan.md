@@ -150,28 +150,29 @@ on known strings, empty string, monotonicity.
 - [x] Smoke tests pass
 - [x] Committed `c00cc6a`, pushed to `github/feat/entropy-mining`
 
-### Commit 2: `--entropy-difficulty` (dynamic edge resolver) — IN PROGRESS
+### Commit 2: `--entropy-difficulty` (dynamic edge resolver) — DONE
 
 - [x] Add `BECH32_MAX_ENTROPY` constant to `src/entropy.rs`
 - [x] Add `EdgeSide` enum + `EdgeResult` struct to `src/entropy.rs`
 - [x] Add `edge_difficulty()` function to `src/entropy.rs`
 - [x] Add `best_edge()` function to `src/entropy.rs`
-- [ ] Add unit tests for `edge_difficulty` + `best_edge` in `src/entropy.rs`
-- [ ] Add `--entropy-difficulty` CLI arg + validation in `src/cli.rs`
-- [ ] Wire difficulty mining branch + colored output in `src/main.rs`
-- [ ] Update `README.md` with `--entropy-difficulty` docs
-- [ ] `cargo fmt` / `cargo clippy` / `cargo test` / `cargo build --release`
-- [ ] Smoke test: `--entropy-difficulty 40`, mutual exclusion, no regression
-- [ ] Commit + push
+- [x] Add unit tests for `edge_difficulty` + `best_edge` in `src/entropy.rs` (11 new)
+- [x] Add `--entropy-difficulty` CLI arg + validation in `src/cli.rs`
+- [x] Wire difficulty mining branch + colored output in `src/main.rs`
+- [x] Update `README.md` with `--entropy-difficulty` docs
+- [x] `cargo fmt` / `cargo clippy` / `cargo test` (21 passed) / `cargo build --release`
+- [x] Smoke test: `--entropy-difficulty 25` (milestones 28→48 bits), mutual exclusion, validation
+- [x] Commit `f786d5e`, pushed to `github/feat/entropy-mining`
 
-### nsite demo (`entropy-edge-demo`) — PENDING
+### nsite demo (`entropy-edge-demo`) — DONE
 
-- [ ] Create new repo `/home/c03rad0r/entropy-edge-demo/`
-- [ ] Implement `app.js` (entropy math + `bestEdge()` resolver + rendering)
-- [ ] Create `index.html` (3 sections: resolver, gallery, explainer)
-- [ ] Create `style.css` (dark theme, green highlights, bar chart)
-- [ ] Create `README.md` (nsite publishing + formula reference)
-- [ ] Test locally in browser
+- [x] Create new repo `/home/c03rad0r/entropy-edge-demo/`
+- [x] Implement `app.js` (entropy math + `bestEdge()` resolver + rendering)
+- [x] Create `index.html` (3 sections: resolver, gallery, explainer)
+- [x] Create `style.css` (dark theme, green highlights, bar chart)
+- [x] Create `README.md` (nsite publishing + formula reference)
+- [x] Verified JS `bestEdge()` matches Rust `best_edge()` on 3 test npubs
+- [x] Committed `4aa2a97`
 
 ### Pre-PR (manual)
 

@@ -9,6 +9,13 @@
 /// The bech32 alphabet has exactly 32 symbols.
 pub const BECH32_MAX_ENTROPY: f64 = 5.0;
 
+/// Quality floor for the difficulty metric. Edges with Shannon entropy above
+/// this value are "barely below random" and receive zero difficulty — they are
+/// not considered patterned. `3.0 = log₂(8)`: only edges using effectively
+/// ≤ 8 of the 32 bech32 symbols qualify. This prevents long mediocre edges
+/// from outscoring short genuinely-patterned ones.
+pub const ENTROPY_FLOOR: f64 = 3.0;
+
 /// Compute the Shannon entropy (in bits per character) of an arbitrary string.
 ///
 /// Uses a fixed stack `[usize; 256]` histogram — no heap allocations — so it is
@@ -85,11 +92,16 @@ impl EdgeResult {
 }
 
 /// Compute the difficulty (bits of pattern) of a string:
-/// `length × (BECH32_MAX_ENTROPY − entropy)`.
+/// `length × (BECH32_MAX_ENTROPY − entropy)`, or `0.0` if the entropy exceeds
+/// `ENTROPY_FLOOR` (the edge is too random to be considered patterned).
 #[inline]
 pub fn edge_difficulty(data: &str) -> f64 {
     let h = shannon_entropy(data);
-    data.len() as f64 * (BECH32_MAX_ENTROPY - h)
+    if h <= ENTROPY_FLOOR {
+        data.len() as f64 * (BECH32_MAX_ENTROPY - h)
+    } else {
+        0.0
+    }
 }
 
 /// Compute Shannon entropy from a pre-filled histogram.
@@ -110,7 +122,8 @@ fn entropy_from_hist(hist: &[usize; 256], len: usize) -> f64 {
 }
 
 /// Resolve the best entropy edge on an npub — the prefix or suffix window
-/// (of any length 1..=29) that maximises `L × (5 − H)`.
+/// (of any length 1..=29) that maximises difficulty. Edges with entropy
+/// above `ENTROPY_FLOOR` receive zero difficulty and are skipped.
 ///
 /// Scans prefix and suffix edges incrementally (one histogram update per step),
 /// so the total cost is O(2 × 29 × 32) ≈ O(1,856) character operations per npub.
@@ -133,6 +146,9 @@ pub fn best_edge(npub: &str) -> EdgeResult {
     for l in 1..=max_edge {
         hist[bytes[l - 1] as usize] += 1;
         let h = entropy_from_hist(&hist, l);
+        if h > ENTROPY_FLOOR {
+            continue;
+        }
         let diff = l as f64 * (BECH32_MAX_ENTROPY - h);
         if diff > best.difficulty {
             best = EdgeResult {
@@ -149,6 +165,9 @@ pub fn best_edge(npub: &str) -> EdgeResult {
     for l in 1..=max_edge {
         hist[bytes[data_len - l] as usize] += 1;
         let h = entropy_from_hist(&hist, l);
+        if h > ENTROPY_FLOOR {
+            continue;
+        }
         let diff = l as f64 * (BECH32_MAX_ENTROPY - h);
         if diff > best.difficulty {
             best = EdgeResult {
@@ -318,7 +337,62 @@ mod tests {
         let result = best_edge(npub);
         assert!(result.length > 0);
         assert!(result.length <= 29);
-        assert!(result.entropy >= 0.0 && result.entropy <= 5.0 + EPS);
+        assert!(result.entropy >= 0.0 && result.entropy <= ENTROPY_FLOOR + EPS);
         assert!(result.difficulty >= 0.0);
+    }
+
+    // --- ENTROPY_FLOOR tests ---
+
+    #[test]
+    fn edge_difficulty_above_floor_is_zero() {
+        // 16 distinct bech32 chars → H = log2(16) = 4.0 > ENTROPY_FLOOR (3.0)
+        let diverse = "qpzry9x8gf2tvdw0";
+        assert!(shannon_entropy(diverse) > ENTROPY_FLOOR);
+        assert_eq!(edge_difficulty(diverse), 0.0);
+    }
+
+    #[test]
+    fn edge_difficulty_at_floor_boundary() {
+        // Exactly 8 distinct chars → H = log2(8) = 3.0 = ENTROPY_FLOOR
+        // Should still get credit (H <= floor, inclusive)
+        let eight = "qpzry9x8";
+        let h = shannon_entropy(eight);
+        assert!((h - 3.0).abs() < EPS);
+        assert!(edge_difficulty(eight) > 0.0);
+    }
+
+    #[test]
+    fn best_edge_skips_above_floor_edges() {
+        // The best edge should never have entropy above the floor
+        let npub = "npub1x7m2kp9qfl5d3wrt8hnqzy0vce4plm3k9j5w7f2g6h8d4s1n";
+        let result = best_edge(npub);
+        assert!(
+            result.entropy <= ENTROPY_FLOOR + EPS,
+            "best edge entropy {} exceeds floor {}",
+            result.entropy,
+            ENTROPY_FLOOR
+        );
+    }
+
+    #[test]
+    fn floor_prevents_long_mediocre_edge_from_winning() {
+        // A long edge with H > 3.0 would score high without the floor,
+        // but should be zeroed out. Verify the resolver doesn't pick it.
+        // "qpzry9x8gf2tvdw0s3jn" = 20 distinct bech32 chars, H ≈ 4.1
+        // followed by repetitive 'a's as suffix.
+        let npub = "npub1qpzry9x8gf2tvdw0s3jnaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let result = best_edge(npub);
+        // The diverse prefix (H > floor) should be zeroed.
+        // Best edge must be the repetitive suffix, not the diverse prefix.
+        assert_eq!(
+            result.side,
+            EdgeSide::Suffix,
+            "diverse prefix should have been zeroed by floor"
+        );
+        assert!(
+            result.entropy < 1.0,
+            "expected low-entropy suffix edge, got entropy {}",
+            result.entropy
+        );
     }
 }
