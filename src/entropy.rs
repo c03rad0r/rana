@@ -11,10 +11,10 @@ pub const BECH32_MAX_ENTROPY: f64 = 5.0;
 
 /// Quality floor for the difficulty metric. Edges with Shannon entropy above
 /// this value are "barely below random" and receive zero difficulty — they are
-/// not considered patterned. `3.0 = log₂(8)`: only edges using effectively
-/// ≤ 8 of the 32 bech32 symbols qualify. This prevents long mediocre edges
-/// from outscoring short genuinely-patterned ones.
-pub const ENTROPY_FLOOR: f64 = 3.0;
+/// not considered patterned. `1.0 = log₂(2)`: only edges using effectively
+/// ≤ 2 of the 32 bech32 symbols qualify. This ensures every passing edge is
+/// visually recognizable as a genuine vanity pattern.
+pub const ENTROPY_FLOOR: f64 = 1.0;
 
 /// Compute the Shannon entropy (in bits per character) of an arbitrary string.
 ///
@@ -266,8 +266,8 @@ mod tests {
 
     #[test]
     fn edge_difficulty_diverse() {
-        // "abcd": entropy 2.0 → 4 × (5 − 2) = 12.0
-        assert!((edge_difficulty("abcd") - 12.0).abs() < EPS);
+        // "abcd": entropy 2.0 > ENTROPY_FLOOR (1.0) → zeroed
+        assert_eq!(edge_difficulty("abcd"), 0.0);
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn edge_difficulty_above_floor_is_zero() {
-        // 16 distinct bech32 chars → H = log2(16) = 4.0 > ENTROPY_FLOOR (3.0)
+        // 16 distinct bech32 chars → H = log2(16) = 4.0 > ENTROPY_FLOOR (1.0)
         let diverse = "qpzry9x8gf2tvdw0";
         assert!(shannon_entropy(diverse) > ENTROPY_FLOOR);
         assert_eq!(edge_difficulty(diverse), 0.0);
@@ -353,12 +353,12 @@ mod tests {
 
     #[test]
     fn edge_difficulty_at_floor_boundary() {
-        // Exactly 8 distinct chars → H = log2(8) = 3.0 = ENTROPY_FLOOR
+        // Exactly 2 distinct chars → H = log2(2) = 1.0 = ENTROPY_FLOOR
         // Should still get credit (H <= floor, inclusive)
-        let eight = "qpzry9x8";
-        let h = shannon_entropy(eight);
-        assert!((h - 3.0).abs() < EPS);
-        assert!(edge_difficulty(eight) > 0.0);
+        let two = "qpqpqpqp";
+        let h = shannon_entropy(two);
+        assert!((h - 1.0).abs() < EPS);
+        assert!(edge_difficulty(two) > 0.0);
     }
 
     #[test]
